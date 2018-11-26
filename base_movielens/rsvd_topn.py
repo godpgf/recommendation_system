@@ -88,11 +88,11 @@ sorted_item = sorted(item_popularity.items(), key=lambda x: x[1], reverse=True)
 # svd.eval(uis_train, uis_test)
 
 
-def test_eval_items(svd, df_train, df_test, N=10):
-    dic_train = reader.df_2_dic(df_train)
-    dic_test = reader.df_2_dic(df_test)
+def test_eval_items(svd, dic_train, dic_test, item_popularity, N=10):
+    # dic_train = reader.df_2_dic(df_train)
+    # dic_test = reader.df_2_dic(df_test)
     all_items = np.array(list(reader.get_all_itens(dic_test)))
-    item_popularity = reader.get_item_popularity(dic_train)
+    # item_popularity = reader.get_item_popularity(dic_train)
 
     # 推荐
     def recommender(user, N):
@@ -154,5 +154,5 @@ for ratio in [1.0, 2.0, 3.0, 5.0, 10.0, 20.0]:
     svd = RSVD(reader.NUM_USER_IDS, reader.NUM_ITEM_IDS)
     for i in range(20):
         svd.train(svd_train)
-    pre, rec, cov, pop = test_eval_items(svd, df_train, df_test, 10)
+    pre, rec, cov, pop = test_eval_items(svd, dic_train, dic_test, item_popularity,10)
     print("%.1f\t\t%.2f%%\t\t%.2f%%\t\t%.2f%%\t\t%.6f" % (ratio, pre * 100, rec * 100, cov * 100, pop))
