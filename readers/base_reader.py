@@ -138,12 +138,12 @@ def add_negative_sample(user_item_dic, sorted_item, ratio):
     data = []
     for user, items in user_item_dic.items():
         # dic.setdefault(user, {})
-        for item in items.items():
+        for item, rating in items.items():
             # dic[item] = 1.0
             data.append([user, item, 1.0])
         neg_size = ratio * len(items)
         cnt = 0
-        for i in len(sorted_item):
+        for i in range(len(sorted_item)):
             item, pop = sorted_item[i]
             if item not in items:
                 # dic[item] = 0.0
@@ -151,7 +151,9 @@ def add_negative_sample(user_item_dic, sorted_item, ratio):
                 cnt += 1
             if cnt >= neg_size:
                 break
-    return np.array(data)
+    data = np.array(data)
+    np.random.shuffle(data)
+    return data
 
 
 
