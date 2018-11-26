@@ -97,6 +97,8 @@ def read_score_file(path, sep="\t"):
     rows = len(df)
     # Purely integer-location based indexing for selection by position
     df = df.iloc[np.random.permutation(rows)].reset_index(drop=True)
+    # for col in ["user_id", "item_id", "rating"]:
+    #     df[col] = df[col].astype(np.int32)
     # Separate data into train and test, 90% for train and 10% for test
     split_index = int(rows * 0.9)
     # Use indices to separate the data
@@ -114,6 +116,45 @@ def df_2_dic(df):
     return dic
 
 
+def df_2_dic_all(df):
+    rating_dic = {}
+    movie_dic = {}
+    user_dic = {}
+    for index, row in df.iterrows():
+        user, item, record = int(row["user_id"]), int(row["item_id"]), row["rating"]
+        rating_dic.setdefault(user, {})
+        rating_dic[user][item] = record
+
+        if item not in movie_dic:
+            movie_dic[item] = row["genres"]
+
+        if user not in user_dic:
+            user_dic[user] = (row["age"], row["gender"], row["occupation"])
+
+    return rating_dic, user_dic, movie_dic
+
+
+def add_negative_sample(user_item_dic, sorted_item, ratio):
+    data = []
+    for user, items in user_item_dic.items():
+        # dic.setdefault(user, {})
+        for item in items.items():
+            # dic[item] = 1.0
+            data.append([user, item, 1.0])
+        neg_size = ratio * len(items)
+        cnt = 0
+        for i in len(sorted_item):
+            item, pop = sorted_item[i]
+            if item not in items:
+                # dic[item] = 0.0
+                data.append([user, item, 0.0])
+                cnt += 1
+            if cnt >= neg_size:
+                break
+    return np.array(data)
+
+
+
 def get_all_itens(dic):
     all_items = set()
     for user, items in dic.items():
@@ -128,7 +169,9 @@ def get_item_popularity(dic):
     for user, items in dic.items():
         for i in items.keys():
             item_popularity.setdefault(i, 0)
-            item_popularity[i] += 1
+            # modify by yanyu 给流行度加上权重，一个用户看到的电影越少，他的意见权重越高
+            # item_popularity[i] += 1
+            item_popularity[i] += 1.0 / len(items)
     return item_popularity
 
 

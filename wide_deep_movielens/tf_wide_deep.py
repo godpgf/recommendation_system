@@ -1,11 +1,12 @@
 # Imports for data io operations
 from collections import deque
 from six import next
-import readers
+from readers import base_reader as reader
 
 # Main imports for training
 import tensorflow as tf
 import numpy as np
+import math
 
 # Evaluate train times per epoch
 import time
@@ -13,12 +14,11 @@ import time
 # Constant seed for replicating training results
 np.random.seed(42)
 
+USER_EMBEDDING_DIM = 10
+ITEM_EMBEDDING_DIM = 20
+HIDE_EMBEDDING_DIM = 10
 
-USER_EMBEDDING_DIM = 4
-ITEM_EMBEDDING_DIM = 8
-HIDE_EMBEDDING_DIM = 5
-
-BATCH_SIZE = 1000  # Number of samples per batch
+BATCH_SIZE = 4096  # Number of samples per batch
 MAX_EPOCHS = 1000  # Number of times the network sees all the training data
 
 # 用户id的输入
@@ -30,11 +30,11 @@ rating_batch = tf.placeholder(tf.float32, shape=[None])
 # 性别输入
 gender_batch = tf.placeholder(tf.float32, shape=[None, 2])
 # 物品标签输入
-genres_batch = tf.placeholder(tf.float32, shape=[None, len(readers.GENRES)])
+genres_batch = tf.placeholder(tf.float32, shape=[None, len(reader.GENRES)])
 # 年龄输入
-age_batch = tf.placeholder(tf.float32, shape=[None, len(readers.AGES)])
+age_batch = tf.placeholder(tf.float32, shape=[None, len(reader.AGES)])
 # 职业输入
-occupation_batch = tf.placeholder(tf.float32, shape=[None, readers.OCCUPATION_LEN])
+occupation_batch = tf.placeholder(tf.float32, shape=[None, reader.OCCUPATION_LEN])
 
 
 def clip(x):
@@ -42,7 +42,7 @@ def clip(x):
 
 
 def model(user_batch, item_batch, user_num, item_num, gender_batch, genres_batch, age_batch, occupation_batch,
-          dnn_hidden_units=[24, 24, 6], device="/cpu:0"):
+          dnn_hidden_units=[64, 64, 16], device="/cpu:0"):
     with tf.device(device):
         with tf.variable_scope('lsi', reuse=True):
             # 创建全局偏置
@@ -83,8 +83,8 @@ def model(user_batch, item_batch, user_num, item_num, gender_batch, genres_batch
 
         # 得到深度模型
         x = tf.concat([embd_user_deep, embd_item_deep, gender_batch, genres_batch, age_batch, occupation_batch], 1)
-        input_size = USER_EMBEDDING_DIM + ITEM_EMBEDDING_DIM + len(readers.GENRES) + 2 + len(
-            readers.AGES) + readers.OCCUPATION_LEN
+        input_size = USER_EMBEDDING_DIM + ITEM_EMBEDDING_DIM + len(reader.GENRES) + 2 + len(
+            reader.AGES) + reader.OCCUPATION_LEN
 
         reg_deep = tf.add(tf.nn.l2_loss(embd_user_deep), tf.nn.l2_loss(embd_item_deep))
         for hide_size in dnn_hidden_units:
@@ -103,7 +103,7 @@ def model(user_batch, item_batch, user_num, item_num, gender_batch, genres_batch
     return infer, reg_wide, reg_deep
 
 
-def loss(infer, reg_wide, reg_deep, rate_batch, learning_rate=0.000006, lambda_wide=0.1, lambda_deep=0.0,
+def loss(infer, reg_wide, reg_deep, rate_batch, learning_rate=0.0000032, lambda_wide=0.036, lambda_deep=0.001,
          device="/cpu:0"):
     with tf.device(device):
         # Use L2 loss to compute penalty
@@ -113,11 +113,15 @@ def loss(infer, reg_wide, reg_deep, rate_batch, learning_rate=0.000006, lambda_w
         cost = cost_l2 + tf.multiply(reg_wide, penalty_wide) + tf.multiply(reg_deep, penalty_deep)
         # cost = cost_l2 + tf.multiply(reg_wide, penalty_wide)
         # 'Follow the Regularized Leader' optimizer
-        train_op = tf.train.GradientDescentOptimizer(learning_rate).minimize(cost)
+
+        global_step = tf.Variable(0, trainable=False)
+        lr = tf.train.exponential_decay(learning_rate, global_step, MAX_EPOCHS * samples_per_batch, learning_rate * 160, staircase=True)
+
+        train_op = tf.train.GradientDescentOptimizer(lr).minimize(cost)
     return cost, train_op
 
 
-df_train, df_test = readers.read_file("ml-1m", "::")
+df_train, df_test = reader.read_file("../data/ml-1m", "::")
 samples_per_batch = len(df_train) // BATCH_SIZE
 print("Number of train samples %d, test samples %d, samples per batch %d" %
       (len(df_train), len(df_test), samples_per_batch))
@@ -135,31 +139,106 @@ print(df_train["rating"].head())
 print(df_test["rating"].head())
 
 # Using a shuffle iterator to generate random batches, for training
-iter_train = readers.ShuffleIterator([df_train["user_id"],
-                                      df_train["item_id"],
-                                      df_train["gender"],
-                                      df_train["genres"],
-                                      df_train["age"],
-                                      df_train["occupation"],
-                                      df_train['rating']],
-                                     batch_size=BATCH_SIZE)
+iter_train = reader.ShuffleIterator([df_train["user_id"],
+                                     df_train["item_id"],
+                                     df_train["gender"],
+                                     df_train["genres"],
+                                     df_train["age"],
+                                     df_train["occupation"],
+                                     df_train['rating']],
+                                    batch_size=BATCH_SIZE)
 
 # Sequentially generate one-epoch batches, for testing
-iter_test = readers.OneEpochIterator([df_test["user_id"],
-                                      df_test["item_id"],
-                                      df_test["gender"],
-                                      df_test["genres"],
-                                      df_test["age"],
-                                      df_test["occupation"],
-                                      df_test['rating']],
-                                     batch_size=-1)
+iter_test = reader.OneEpochIterator([df_test["user_id"],
+                                     df_test["item_id"],
+                                     df_test["gender"],
+                                     df_test["genres"],
+                                     df_test["age"],
+                                     df_test["occupation"],
+                                     df_test['rating']],
+                                    batch_size=-1)
 
-infer, reg_wide, reg_deep = model(user_batch, item_batch, readers.NUM_USER_IDS, readers.NUM_ITEM_IDS, gender_batch, genres_batch,
+infer, reg_wide, reg_deep = model(user_batch, item_batch, reader.NUM_USER_IDS, reader.NUM_ITEM_IDS, gender_batch,
+                                  genres_batch,
                                   age_batch, occupation_batch)
 _, train_op = loss(infer, reg_wide, reg_deep, rating_batch)
 
 saver = tf.train.Saver()
 init_op = tf.global_variables_initializer()
+
+
+def test_eval_items(sess, user_batch, item_batch, gender_batch, genres_batch, age_batch, occupation_batch, pred, N=10):
+    dic_train = reader.df_2_dic(df_train)
+    dic_test_rating, dic_test_user, dic_test_movie = reader.df_2_dic_all(df_test)
+    all_train_items = np.array(list(reader.get_all_itens(dic_train)))
+    all_train_genres = np.array([dic_test_movie[item] for item in all_train_items])
+    all_test_items = np.array(list(reader.get_all_itens(dic_test_rating)))
+    item_popularity = reader.get_item_popularity(dic_train)
+
+    # 推荐
+    def recommender(user, N):
+        all_users = np.empty(len(all_train_items), dtype=np.int32)
+        all_users.fill(user)
+        all_age = np.empty([len(all_train_items), len(reader.AGES)], dtype=np.float32)
+        all_age.fill(dic_test_user[user][0])
+        all_gender = np.empty([len(all_train_items), 2], dtype=np.float32)
+        all_gender.fill(dic_test_user[user][1])
+        all_occupation = np.empty([len(all_train_items), reader.OCCUPATION_LEN], dtype=np.float32)
+        all_occupation.fill(dic_test_user[user][2])
+
+        interacted_items = dic_train[user]
+        pred_batch = sess.run(pred, feed_dict={user_batch: all_users, item_batch: all_train_items,
+                                               gender_batch: all_gender, genres_batch: all_train_genres,
+                                               age_batch: all_age, occupation_batch: all_occupation})
+        index = np.argsort(-pred_batch)
+        rank = {}
+
+        # test = ""
+        for id in index:
+            if all_train_items[id] not in interacted_items:
+                rank[all_train_items[id]] = pred_batch[id]
+                # test += "%.4f "%pred_batch[id]
+                if len(rank) >= N:
+                    break
+        # print(test)
+
+        return rank
+
+    """
+    计算算法的精度和回调
+    """
+    hit = 0
+    pre = 0
+    rec = 0
+
+    # 记录预测到的物品在总物品中的比重
+    recommend_items = set()
+
+    # 计算新鲜度:测评的最简单方法是利用推荐结果的平均流行度，越不热门的物品越可能让用户觉得新颖。返回值越小，新颖度越大
+    ret = 0  # 新颖度结果
+    n = 0  # 推荐的总个数
+
+    # l = 0
+
+    for user, tu in dic_test_rating.items():
+        # tu = dic_test[user]
+        rank = recommender(user, N)
+        for item, pui in rank.items():
+            if item in tu:
+                hit += 1
+
+            recommend_items.add(item)
+
+            ret += math.log(1 + item_popularity[item])
+            n += 1
+        pre += N
+        rec += len(tu)
+        # l += 1
+        # print("%d/%d"%(l, len(test)))
+    ret /= n * 1.0
+    # 精度=命中数/预测数，召回=命中数/总共评分数，覆盖率，
+    return hit / (pre * 1.0), hit / (rec * 1.0), len(recommend_items) / (len(all_test_items) * 1.0), ret
+
 
 with tf.Session() as sess:
     sess.run(init_op)
@@ -197,3 +276,7 @@ with tf.Session() as sess:
             start = end
 
     saver.save(sess, './save/')
+    print('precision\trecall\t\tCoverage\tPopularity')
+    pre, rec, cov, pop = test_eval_items(sess, user_batch, item_batch, gender_batch, genres_batch, age_batch,
+                                         occupation_batch, infer, 10)
+    print("%.2f%%\t\t%.2f%%\t\t%.2f%%\t\t%.6f" % (pre * 100, rec * 100, cov * 100, pop))

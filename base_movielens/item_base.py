@@ -1,5 +1,5 @@
 import numpy as np
-import readers
+from readers import base_reader as reader
 import math
 from pprint import pprint
 
@@ -9,7 +9,7 @@ import time
 # Constant seed for replicating training results
 np.random.seed(42)
 
-df_train, df_test = readers.read_file("ml-1m", "::")
+df_train, df_test = reader.read_file("../data/ml-1m", "::")
 
 # Peeking at the top 5 user values
 print(df_train["user_id"].head())
@@ -24,17 +24,8 @@ print(df_train["rating"].head())
 print(df_test["rating"].head())
 
 
-def df_2_dic(df):
-    dic = {}
-    for index, row in df.iterrows():
-        user, item, record = row["user_id"], row["item_id"], row["rating"]
-        dic.setdefault(user, {})
-        dic[user][item] = record
-    return dic
-
-
-dic_train = df_2_dic(df_train)
-dic_test = df_2_dic(df_test)
+dic_train = reader.df_2_dic(df_train)
+dic_test = reader.df_2_dic(df_test)
 
 
 def eval_test(train, test, all_items, item_popularity, W, K, N):
@@ -73,47 +64,33 @@ def eval_test(train, test, all_items, item_popularity, W, K, N):
     return hit / (pre * 1.0), hit / (rec * 1.0), len(recommend_items) / (len(all_items) * 1.0), ret
 
 
-def get_all_itens(dic):
-    all_items = set()
-    for user, items in dic.items():
-        for i in items.keys():
-            all_items.add(i)
-    return all_items
-
-
-def get_item_popularity(dic):
-    item_popularity = dict()
-    # 计算物品流行度
-    for user, items in dic.items():
-        for i in items.keys():
-            item_popularity.setdefault(i, 0)
-            item_popularity[i] += 1
-    return item_popularity
-
-
 # 物品相似度
-def itemSimilarity(train, method='IUF'):
-    C = dict()
-    N = dict()
+def itemSimilarity(train):
+    # 两个物品之间的初步相似度
+    cor_items = dict()
+    # 物品被用户购买的次数
+    n_users = dict()
     for u, items in train.items():
         for i in items:
             # 记录某个物品被选中的次数
-            N[i] = N.get(i, 0) + 1
+            n_users[i] = n_users.get(i, 0) + 1
             for j in items:
                 if i == j:
                     continue
-                C.setdefault(i, {})
-                if method == 'IUF':
-                    # 物品i的用户向量 叉乘 物品j的用户向量就是余弦相似度
-                    C[i][j] = C[i].get(j, 0) + 1 / math.log(1 + len(items) * 1.0)
-                else:
-                    # 物品i和物品j同时出现的次数多，就相似
-                    C[i][j] = C[i].get(j, 0) + 1
+                cor_items.setdefault(i, {})
+                # 一个用户如果选过太多物品，这个人就不会太有个性
+                cor_items[i][j] = cor_items[i].get(j, 0) + 1 / math.log(1 + len(items) * 1.0)
+
     W = dict()
-    for i, related_items in C.items():
+    for i, related_items in cor_items.items():
+        max_wi = 0.0
         for j, cij in related_items.items():
             W.setdefault(i, {})
-            W[i][j] = cij / math.sqrt(N[i] * N[j])
+            W[i][j] = cij / math.sqrt(n_users[i] * n_users[j])
+            max_wi = max(W[i][j], max_wi)
+        # 归一化
+        for j, cij in related_items.items():
+            W[i][j] /= max_wi
         W[i]["sort_items"] = sorted(W[i].items(), key=lambda c: c[1], reverse=True)
     return W
 
@@ -144,9 +121,9 @@ pprint(rank)
 result = open('result_ibcf.data', 'w')
 print(u'不同K值下推荐算法的各项指标(精度、召回率、覆盖率、流行度)\n')
 
-all_items = get_all_itens(dic_test)
+all_items = reader.get_all_itens(dic_test)
 print("完成所有物品统计")
-item_popularity = get_item_popularity(dic_train)
+item_popularity = reader.get_item_popularity(dic_train)
 print("完成物品流行度统计")
 
 print('K\t\tprecision\trecall\t\tCoverage\tPopularity')

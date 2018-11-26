@@ -1,5 +1,5 @@
 import numpy as np
-import readers
+from readers import base_reader as reader
 import math
 
 
@@ -76,18 +76,23 @@ class RSVD(object):
 # Constant seed for replicating training results
 np.random.seed(42)
 
-df_train, df_test = readers.read_score_file("ml-1m", "::")
-uis_train, uis_test = df_train[["user_id", "item_id", "rating"]].values, df_test[["user_id", "item_id", "rating"]].values
+df_train, df_test = reader.read_score_file("../data/ml-1m", "::")
+# uis_train, uis_test = df_train[["user_id", "item_id", "rating"]].values, df_test[["user_id", "item_id", "rating"]].values
 
-svd = RSVD(readers.NUM_USER_IDS, readers.NUM_ITEM_IDS)
-svd.eval(uis_train, uis_test)
+dic_train = reader.df_2_dic(df_train)
+dic_test = reader.df_2_dic(df_test)
+item_popularity = reader.get_item_popularity(dic_train)
+sorted_item = sorted(item_popularity.items(), key=lambda x: x[1], reverse=True)
+
+# svd = RSVD(reader.NUM_USER_IDS, reader.NUM_ITEM_IDS)
+# svd.eval(uis_train, uis_test)
 
 
 def test_eval_items(svd, df_train, df_test, N=10):
-    dic_train = readers.df_2_dic(df_train)
-    dic_test = readers.df_2_dic(df_test)
-    all_items = np.array(list(readers.get_all_itens(dic_test)))
-    item_popularity = readers.get_item_popularity(dic_train)
+    dic_train = reader.df_2_dic(df_train)
+    dic_test = reader.df_2_dic(df_test)
+    all_items = np.array(list(reader.get_all_itens(dic_test)))
+    item_popularity = reader.get_item_popularity(dic_train)
 
     # 推荐
     def recommender(user, N):
@@ -142,6 +147,12 @@ def test_eval_items(svd, df_train, df_test, N=10):
     # 精度=命中数/预测数，召回=命中数/总共评分数，覆盖率，
     return hit / (pre * 1.0), hit / (rec * 1.0), len(recommend_items) / (len(all_items) * 1.0), ret
 
-print('precision\trecall\t\tCoverage\tPopularity')
-pre, rec, cov, pop = test_eval_items(svd, df_train, df_test, 10)
-print("%.2f%%\t\t%.2f%%\t\t%.2f%%\t\t%.6f" % (pre * 100, rec * 100, cov * 100, pop))
+
+print('ratio\t\tprecision\trecall\t\tCoverage\tPopularity')
+for ratio in [1.0, 2.0, 3.0, 5.0, 10.0, 20.0]:
+    svd_train = reader.add_negative_sample(dic_train, sorted_item, ratio)
+    svd = RSVD(reader.NUM_USER_IDS, reader.NUM_ITEM_IDS)
+    for i in range(20):
+        svd.train(svd_train)
+    pre, rec, cov, pop = test_eval_items(svd, df_train, df_test, 10)
+    print("%.1f\t\t%.2f%%\t\t%.2f%%\t\t%.2f%%\t\t%.6f" % (ratio, pre * 100, rec * 100, cov * 100, pop))
